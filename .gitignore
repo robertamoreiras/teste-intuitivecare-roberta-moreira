@@ -6,10 +6,9 @@ venv/
 __pycache__/
 *.pyc
 
-# Dados e arquivos temporários
-*.zip
-*.csv
-*.xlsx
+# Dados e arquivos
+data/raw/
+data/extracted/
 
 # VS Code
 .vscode/
