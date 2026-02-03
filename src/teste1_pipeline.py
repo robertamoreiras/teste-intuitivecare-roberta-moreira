@@ -21,6 +21,7 @@ import zipfile
 import shutil
 import pandas as pd
 import chardet
+import re
 
 
 # =============================================================================
@@ -184,91 +185,75 @@ def etapa2_descompactar():
     
     return sucessos > 0
 
-
 # =============================================================================
-# ETAPA 3: FILTRAR DESPESAS/SINISTROS
+# ETAPA 3: FILTRAR LINHAS DE DESPESAS / SINISTROS (CORRETA)
 # =============================================================================
 
 def etapa3_filtrar():
-    """
-    Filtra arquivos de despesas e sinistros com base no CONTEÚDO
-    """
     print("=" * 70)
-    print("ETAPA 3: FILTRANDO DESPESAS/SINISTROS (POR CONTEÚDO)")
+    print("ETAPA 3: FILTRANDO DESPESAS (CONTA CONTÁBIL)")
     print("=" * 70)
     print()
-    
+
     pasta_origem = "dados_extraidos"
     pasta_destino = "dados_despesas_sinistros"
-    
-    if not os.path.exists(pasta_origem):
-        print(f"✗ Pasta '{pasta_origem}' não encontrada!")
-        return False
-    
-    if not os.path.exists(pasta_destino):
-        os.makedirs(pasta_destino)
-        print(f"✓ Pasta '{pasta_destino}' criada!")
-    
-    # Listar arquivos
-    todos_arquivos = []
-    for raiz, _, arquivos in os.walk(pasta_origem):
-        for arquivo in arquivos:
-            todos_arquivos.append(os.path.join(raiz, arquivo))
-    
-    print(f"Total de arquivos encontrados: {len(todos_arquivos)}")
-    print()
-    
-    copiados = 0
-    
-    for caminho_arquivo in todos_arquivos:
-        nome_arquivo = os.path.basename(caminho_arquivo)
-        extensao = os.path.splitext(nome_arquivo)[1].lower()
+    os.makedirs(pasta_destino, exist_ok=True)
 
-        if extensao not in ['.csv', '.txt', '.xlsx', '.xls']:
+    arquivos = []
+    for raiz, _, files in os.walk(pasta_origem):
+        for f in files:
+            if f.endswith((".csv", ".txt")):
+                arquivos.append(os.path.join(raiz, f))
+
+    if not arquivos:
+        print("✗ Nenhum arquivo encontrado.")
+        return False
+
+    total_despesas = 0
+
+    for caminho in arquivos:
+        nome = os.path.basename(caminho)
+        print(f"Processando: {nome}")
+
+        df = ler_arquivo(caminho)
+        if df is None or df.empty:
+            print("  ✗ Arquivo inválido")
             continue
 
-        print(f"Analisando conteúdo: {nome_arquivo}")
+        df = normalizar_colunas(df)
 
-        try:
-            if extensao in ['.csv', '.txt']:
-                df = pd.read_csv(
-                    caminho_arquivo,
-                    sep=';',
-                    encoding='latin-1',
-                    nrows=100,
-                    on_bad_lines='skip'
-                )
-            else:
-                df = pd.read_excel(caminho_arquivo, nrows=100)
+        # 🔑 REGRA CONTÁBIL REAL
+        # Despesas = contas que começam com "3"
+        if "cd_conta_contabil" not in df.columns:
+            print("  ✗ Coluna cd_conta_contabil não encontrada")
+            continue
 
-            # 🔑 AQUI ESTÁ A CORREÇÃO PRINCIPAL
-            texto = " ".join(
-                df.astype(str)
-                  .fillna("")
-                  .apply(lambda x: " ".join(x.str.lower()), axis=1)
-            )
+        df["cd_conta_contabil"] = df["cd_conta_contabil"].astype(str)
 
-            encontrou = any(palavra in texto for palavra in PALAVRAS_CHAVE)
+        df_despesas = df[df["cd_conta_contabil"].str.startswith("3")]
 
-            if encontrou:
-                shutil.copy2(
-                    caminho_arquivo,
-                    os.path.join(pasta_destino, nome_arquivo)
-                )
-                copiados += 1
-                print("  ✓ Arquivo relevante")
-            else:
-                print("  ✗ Não relevante")
+        if df_despesas.empty:
+            print("  ✗ Nenhuma despesa encontrada")
+            continue
 
-        except Exception as e:
-            print(f"  ✗ Erro ao analisar {nome_arquivo}: {e}")
+        nome_saida = nome.replace(".csv", "_despesas.csv")
+        caminho_saida = os.path.join(pasta_destino, nome_saida)
+
+        df_despesas.to_csv(
+            caminho_saida,
+            sep=";",
+            encoding="utf-8",
+            index=False
+        )
+
+        total_despesas += len(df_despesas)
+        print(f"  ✓ {len(df_despesas)} linhas de despesa")
 
     print()
-    print(f"✓ {copiados} arquivo(s) copiado(s)")
+    print(f"Total de linhas de despesas: {total_despesas:,}")
     print()
-    
-    # 🚨 NÃO interrompe o pipeline
-    return True
+
+    return total_despesas > 0
 
 # =============================================================================
 # ETAPA 4: NORMALIZAR ARQUIVOS
@@ -522,120 +507,105 @@ def etapa4_normalizar():
     return processados > 0
 
 # =============================================================================
-# ETAPA 5: CONSOLIDAÇÃO E ANÁLISE DE INCONSISTÊNCIAS
+# ETAPA 5: CONSOLIDAÇÃO FINAL (DESPESAS / EVENTOS ANS)
 # =============================================================================
 
 def etapa5_consolidar():
-    print("=" * 70)
-    print("ETAPA 5: CONSOLIDAÇÃO E ANÁLISE DE INCONSISTÊNCIAS")
-    print("=" * 70)
-    print()
+    print("\nETAPA 5: CONSOLIDAÇÃO FINAL - DESPESAS ASSISTENCIAIS")
+    print("=" * 60)
 
-    pasta_origem = "dados_normalizados"
+    pasta_entrada = "dados_despesas_sinistros"
     pasta_saida = "dados_consolidados"
     os.makedirs(pasta_saida, exist_ok=True)
 
-    arquivos = [
-        f for f in os.listdir(pasta_origem)
-        if f.endswith(".csv") and not f.startswith("_")
-    ]
+    arquivo_csv = os.path.join(pasta_saida, "consolidado_despesas.csv")
+    arquivo_zip = os.path.join(pasta_saida, "consolidado_despesas.zip")
+
+    if not os.path.exists(pasta_entrada):
+        print("❌ Pasta 'dados_despesas_sinistros' não encontrada.")
+        return False
+
+    arquivos = [f for f in os.listdir(pasta_entrada) if f.endswith(".csv")]
 
     if not arquivos:
-        print("✗ Nenhum arquivo para consolidar.")
+        print("❌ Nenhum arquivo de despesas encontrado para consolidar.")
         return False
 
-    dfs = []
+    consolidados = []
 
     for arquivo in arquivos:
-        caminho = os.path.join(pasta_origem, arquivo)
-        print(f"Processando: {arquivo}")
+        caminho = os.path.join(pasta_entrada, arquivo)
+        print(f"→ Consolidando: {arquivo}")
 
         try:
-            df = pd.read_csv(caminho, sep=";", encoding="utf-8")
-
-            # ===============================
-            # SELEÇÃO E PADRONIZAÇÃO
-            # ===============================
-            df_padrao = pd.DataFrame()
-
-            # REG_ANS substitui CNPJ
-            df_padrao["cnpj"] = df["reg_ans"]
-
-            # Razão social não existe → documentado como indisponível
-            df_padrao["razao_social"] = "NAO INFORMADA"
-
-            # Valor das despesas
-            df_padrao["valor_despesas"] = pd.to_numeric(
-                df["vl_saldo_final"],
-                errors="coerce"
-            )
-
-            # ===============================
-            # DATA → ANO E TRIMESTRE
-            # ===============================
-            df["data"] = pd.to_datetime(
-                df["data"],
-                errors="coerce",
-                dayfirst=True
-            )
-
-            df_padrao["ano"] = df["data"].dt.year
-
-            df_padrao["trimestre"] = df["data"].dt.quarter.astype(str) + "T"
-
-            # ===============================
-            # INCONSISTÊNCIAS
-            # ===============================
-            df_padrao["status_valor"] = "OK"
-            df_padrao.loc[
-                df_padrao["valor_despesas"] <= 0,
-                "status_valor"
-            ] = "SUSPEITO"
-
-            dfs.append(df_padrao)
-            print("  ✓ Consolidado")
-
+            df = pd.read_csv(caminho, sep=";", encoding="latin-1")
         except Exception as e:
-            print(f"  ✗ Erro: {e}")
+            print(f"  ❌ Erro ao ler arquivo: {e}")
+            continue
 
-    if not dfs:
-        print("✗ Nenhum dado válido.")
-        return False
+        # Validação mínima da estrutura
+        colunas_necessarias = {"data", "reg_ans", "vl_saldo_final"}
+        if not colunas_necessarias.issubset(df.columns):
+            print("  ❌ Estrutura incompatível, ignorado")
+            continue
 
-    # ===============================
-    # CONSOLIDAÇÃO FINAL
-    # ===============================
-    df_final = pd.concat(dfs, ignore_index=True)
+        # Garantir tipo numérico (se vier com vírgula, tenta corrigir)
+        df["vl_saldo_final"] = (
+            df["vl_saldo_final"]
+            .astype(str)
+            .str.replace(".", "", regex=False)   # remove separador de milhar (se existir)
+            .str.replace(",", ".", regex=False)  # troca vírgula por ponto
+        )
+        df["vl_saldo_final"] = pd.to_numeric(df["vl_saldo_final"], errors="coerce")
 
-    caminho_csv = os.path.join(
-        pasta_saida,
-        "consolidado_despesas.csv"
-    )
+        # Remover valores nulos ou <= 0
+        df = df[df["vl_saldo_final"] > 0]
 
-    df_final.to_csv(
-        caminho_csv,
-        sep=";",
-        encoding="utf-8",
-        index=False
-    )
+        if df.empty:
+            print("  ⚠️ Arquivo sem valores válidos após filtro.")
+            continue
 
-    # Compactar
-    caminho_zip = os.path.join(
-        pasta_saida,
-        "consolidado_despesas.zip"
-    )
+        # Extrair ano e trimestre do nome do arquivo (ex: 1T2025)
+        match = re.search(r"([1-4])T(\d{4})", arquivo)
+        if not match:
+            print("  ❌ Não foi possível identificar trimestre/ano pelo nome.")
+            continue
 
-    with zipfile.ZipFile(caminho_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
-        zipf.write(
-            caminho_csv,
-            arcname="consolidado_despesas.csv"
+        trimestre = f"{match.group(1)}T"
+        ano = int(match.group(2))
+
+        # Consolidação (somatório por operadora)
+        resumo = (
+            df.groupby("reg_ans", as_index=False)["vl_saldo_final"]
+            .sum()
+            .rename(columns={"vl_saldo_final": "valor_despesas"})
         )
 
-    print()
-    print("✓ Consolidação finalizada com sucesso")
-    print(f"✓ CSV: {caminho_csv}")
-    print(f"✓ ZIP: {caminho_zip}")
-    print()
+        resumo["ano"] = ano
+        resumo["trimestre"] = trimestre
+
+        consolidados.append(resumo)
+
+    if not consolidados:
+        print("❌ Nenhum dado válido consolidado.")
+        return False
+
+    df_final = pd.concat(consolidados, ignore_index=True)
+
+    # Ordenar para facilitar leitura
+    df_final = df_final.sort_values(by=["ano", "trimestre", "reg_ans"])
+
+    # Salvar CSV
+    df_final.to_csv(arquivo_csv, sep=";", index=False, encoding="utf-8")
+
+    # Criar ZIP com o CSV dentro
+    with zipfile.ZipFile(arquivo_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(arquivo_csv, arcname="consolidado_despesas.csv")
+
+    print("\n✅ Consolidação concluída com sucesso!")
+    print(f"📁 CSV gerado: {arquivo_csv}")
+    print(f"🗜️ ZIP gerado: {arquivo_zip}")
+    print(f"📊 Total de registros: {len(df_final)}")
 
     return True
 
