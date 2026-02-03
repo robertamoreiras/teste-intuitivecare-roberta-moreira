@@ -595,6 +595,9 @@ def etapa5_consolidar():
     # Ordenar para facilitar leitura
     df_final = df_final.sort_values(by=["ano", "trimestre", "reg_ans"])
 
+    # Arredondar valores financeiros para 2 casas decimais
+    df_final["valor_despesas"] = df_final["valor_despesas"].round(2)
+
     # Salvar CSV
     df_final.to_csv(arquivo_csv, sep=";", index=False, encoding="utf-8")
 
