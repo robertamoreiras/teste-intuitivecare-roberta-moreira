@@ -1,14 +1,13 @@
 # Ambiente virtual
-venv/
-.env/
+.venv/
 
-# Python
+# Dados (não versionar)
+dados_ans/
+dados_extraidos/
+dados_despesas_sinistros/
+dados_normalizados/
+dados_consolidados/
+
+# Arquivos temporários
 __pycache__/
 *.pyc
-
-# Dados e arquivos
-data/raw/
-data/extracted/
-
-# VS Code
-.vscode/

@@ -521,6 +521,123 @@ def etapa4_normalizar():
     
     return processados > 0
 
+# =============================================================================
+# ETAPA 5: CONSOLIDAÇÃO E ANÁLISE DE INCONSISTÊNCIAS
+# =============================================================================
+
+def etapa5_consolidar():
+    print("=" * 70)
+    print("ETAPA 5: CONSOLIDAÇÃO E ANÁLISE DE INCONSISTÊNCIAS")
+    print("=" * 70)
+    print()
+
+    pasta_origem = "dados_normalizados"
+    pasta_saida = "dados_consolidados"
+    os.makedirs(pasta_saida, exist_ok=True)
+
+    arquivos = [
+        f for f in os.listdir(pasta_origem)
+        if f.endswith(".csv") and not f.startswith("_")
+    ]
+
+    if not arquivos:
+        print("✗ Nenhum arquivo para consolidar.")
+        return False
+
+    dfs = []
+
+    for arquivo in arquivos:
+        caminho = os.path.join(pasta_origem, arquivo)
+        print(f"Processando: {arquivo}")
+
+        try:
+            df = pd.read_csv(caminho, sep=";", encoding="utf-8")
+
+            # ===============================
+            # SELEÇÃO E PADRONIZAÇÃO
+            # ===============================
+            df_padrao = pd.DataFrame()
+
+            # REG_ANS substitui CNPJ
+            df_padrao["cnpj"] = df["reg_ans"]
+
+            # Razão social não existe → documentado como indisponível
+            df_padrao["razao_social"] = "NAO INFORMADA"
+
+            # Valor das despesas
+            df_padrao["valor_despesas"] = pd.to_numeric(
+                df["vl_saldo_final"],
+                errors="coerce"
+            )
+
+            # ===============================
+            # DATA → ANO E TRIMESTRE
+            # ===============================
+            df["data"] = pd.to_datetime(
+                df["data"],
+                errors="coerce",
+                dayfirst=True
+            )
+
+            df_padrao["ano"] = df["data"].dt.year
+
+            df_padrao["trimestre"] = df["data"].dt.quarter.astype(str) + "T"
+
+            # ===============================
+            # INCONSISTÊNCIAS
+            # ===============================
+            df_padrao["status_valor"] = "OK"
+            df_padrao.loc[
+                df_padrao["valor_despesas"] <= 0,
+                "status_valor"
+            ] = "SUSPEITO"
+
+            dfs.append(df_padrao)
+            print("  ✓ Consolidado")
+
+        except Exception as e:
+            print(f"  ✗ Erro: {e}")
+
+    if not dfs:
+        print("✗ Nenhum dado válido.")
+        return False
+
+    # ===============================
+    # CONSOLIDAÇÃO FINAL
+    # ===============================
+    df_final = pd.concat(dfs, ignore_index=True)
+
+    caminho_csv = os.path.join(
+        pasta_saida,
+        "consolidado_despesas.csv"
+    )
+
+    df_final.to_csv(
+        caminho_csv,
+        sep=";",
+        encoding="utf-8",
+        index=False
+    )
+
+    # Compactar
+    caminho_zip = os.path.join(
+        pasta_saida,
+        "consolidado_despesas.zip"
+    )
+
+    with zipfile.ZipFile(caminho_zip, "w", zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(
+            caminho_csv,
+            arcname="consolidado_despesas.csv"
+        )
+
+    print()
+    print("✓ Consolidação finalizada com sucesso")
+    print(f"✓ CSV: {caminho_csv}")
+    print(f"✓ ZIP: {caminho_zip}")
+    print()
+
+    return True
 
 # =============================================================================
 # PIPELINE PRINCIPAL
@@ -556,6 +673,11 @@ def executar_pipeline():
         print("Pipeline interrompido na Etapa 4")
         return
     
+    # Etapa 5: Consolidar
+    if not etapa5_consolidar():
+        print("Pipeline interrompido na Etapa 5")
+        return
+    
     # Sucesso!
     print("=" * 70)
     print("PIPELINE CONCLUÍDO COM SUCESSO!")
@@ -566,6 +688,8 @@ def executar_pipeline():
     print("  • dados_extraidos/            (Arquivos descompactados)")
     print("  • dados_despesas_sinistros/   (Filtrados)")
     print("  • dados_normalizados/         (Normalizados - PRONTOS!)")
+    print("  • dados_normalizados/         (Normalizados)")
+    print("  • saida_final/                (CSV + ZIP CONSOLIDADO)")
     print()
 
 # =============================================================================
