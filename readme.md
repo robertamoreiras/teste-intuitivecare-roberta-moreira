@@ -315,5 +315,6 @@ A solução prioriza:
 - decisões técnicas explícitas
 - rastreabilidade de inconsistências
 - robustez no processamento
+
 Todas as etapas foram implementadas considerando boas práticas de engenharia de dados e alinhamento com os requisitos do desafio.
 A separação clara entre validação, enriquecimento e agregação garante modularidade, facilita testes independentes e permite evolução futura do pipeline sem acoplamento excessivo.
