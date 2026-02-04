@@ -114,7 +114,9 @@ def executar_enriquecimento():
         return False
 
     df_cons["reg_ans"] = df_cons["reg_ans"].astype(str).str.strip()
-    df_cons["valor_despesas"] = pd.to_numeric(df_cons["valor_despesas"], errors="coerce").round(2)
+    df_cons["valor_despesas"] = pd.to_numeric(df_cons["valor_despesas"], errors="coerce")
+    df_cons = df_cons[df_cons["valor_despesas"].notna() & (df_cons["valor_despesas"] > 0)]
+    df_cons["valor_despesas"] = df_cons["valor_despesas"].round(2)
 
     # 2) Baixar + ler cadastro ANS
     baixar_cadastro_se_precisar()
@@ -123,7 +125,11 @@ def executar_enriquecimento():
     df_cad.columns = [normalizar_nome_coluna(c) for c in df_cad.columns]
 
     # 3) Detectar colunas do cadastro
-    col_reg = achar_coluna(df_cad, ["registro"]) or achar_coluna(df_cad, ["reg"])
+    col_reg = (
+        achar_coluna(df_cad, ["registro", "ans"]) or
+        achar_coluna(df_cad, ["registro"]) or
+        achar_coluna(df_cad, ["reg", "ans"])
+    )
     col_cnpj = achar_coluna(df_cad, ["cnpj"])
     col_razao = achar_coluna(df_cad, ["razao"]) or achar_coluna(df_cad, ["nome"])
     col_mod = achar_coluna(df_cad, ["modalidade"])
@@ -180,6 +186,14 @@ def executar_enriquecimento():
         .apply(agregador)
         .reset_index(drop=True)
     )
+
+    def norm_registro_ans(x):
+        s = somente_digitos(x)
+        return s.lstrip("0")  # remove zeros à esquerda
+
+    df_cons["reg_ans"] = df_cons["reg_ans"].apply(norm_registro_ans)
+    df_cad_base[col_reg] = df_cad_base[col_reg].apply(norm_registro_ans)
+
 
     # 6) Trazer CNPJ para o consolidado via RegistroANS (reg_ans)
     mapa_reg_cnpj = (

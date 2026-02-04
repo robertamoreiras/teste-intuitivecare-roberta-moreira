@@ -11,13 +11,28 @@ os.makedirs(PASTA_SAIDA, exist_ok=True)
 
 # FUNÇÕES DE VALIDAÇÃO
 def validar_ano(valor):
-    return isinstance(valor, int) and 2000 <= valor <= 2100
+    if pd.isna(valor):
+        return False
+    try:
+        ano = int(valor)
+    except (ValueError, TypeError):
+        return False
+    return 2000 <= ano <= 2100
 
 def validar_trimestre(valor):
-    return isinstance(valor, str) and valor in {"1T", "2T", "3T", "4T"}
+    if pd.isna(valor):
+        return False
+    t = str(valor).strip().upper()
+    return t in {"1T", "2T", "3T", "4T"}
 
 def validar_valor(valor):
-    return pd.notna(valor) and valor > 0
+    if pd.isna(valor):
+        return False
+    try:
+        v = float(valor)
+    except (ValueError, TypeError):
+        return False
+    return v > 0
 
 
 # PIPELINE DE VALIDAÇÃO
@@ -29,7 +44,11 @@ def validar_dados():
         print("❌ Arquivo consolidado não encontrado.")
         return False
 
-    df = pd.read_csv(ARQUIVO_ENTRADA, sep=";")
+    df = pd.read_csv(
+        ARQUIVO_ENTRADA,
+        sep=";",
+        dtype={"reg_ans": str, "trimestre": str},
+    )
 
     # Normalização básica
     df.columns = df.columns.str.lower()
@@ -38,7 +57,7 @@ def validar_dados():
     df["ano_valido"] = df["ano"].apply(validar_ano)
     df["trimestre_valido"] = df["trimestre"].apply(validar_trimestre)
     df["valor_valido"] = df["valor_despesas"].apply(validar_valor)
-    df["reg_ans_valido"] = df["reg_ans"].notna()
+    df["reg_ans_valido"] = df["reg_ans"].astype(str).str.strip().ne("") & df["reg_ans"].notna()
 
     # Registro válido se TODAS as regras passarem
     df["registro_valido"] = (

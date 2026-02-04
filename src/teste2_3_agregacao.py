@@ -42,16 +42,24 @@ def executar_agregacao():
         return False
 
     # Garantir tipos corretos
+    df["valor_despesas"] = (
+        df["valor_despesas"].astype(str)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
     df["valor_despesas"] = pd.to_numeric(df["valor_despesas"], errors="coerce")
     df = df.dropna(subset=["valor_despesas"])
 
     # manter só registros com match OK no cadastro
     if "status_match" in df.columns:
+        df["status_match"] = df["status_match"].astype(str).str.strip().str.upper()
         df = df[df["status_match"] == "OK"].copy()
 
-    # remover linhas sem RazaoSocial/UF
+    # normalizar campos de texto
     df["razao_social"] = df["razao_social"].fillna("").astype(str).str.strip()
-    df["uf"] = df["uf"].fillna("").astype(str).str.strip()
+    df["uf"] = df["uf"].fillna("").astype(str).str.strip().str.upper()
+
+    # manter apenas registros com dados mínimos
     df = df[(df["razao_social"] != "") & (df["uf"] != "")].copy()
 
 

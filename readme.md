@@ -81,7 +81,7 @@ A filtragem é realizada **em nível de linha**, utilizando:
 - padrões no código contábil
 - busca textual em colunas de descrição
 - expressões regulares (re) para identificar informações no nome do arquivo
-Isso garante que apenas ***despesas assistenciais (eventos/sinistros)** sejam processadas, conforme o Manual Contábil da ANS.
+Essa abordagem permite uma **aproximação consistente** das despesas assistenciais (eventos / sinistros), alinhada às diretrizes do Manual Contábil da ANS, sem depender de um layout único de arquivo.
 
 ---
 
@@ -140,16 +140,24 @@ Durante a leitura dos arquivos contábeis da ANS, foi necessário decidir entre:
 ---
 
 #### ✔️ Decisão adotada
-Foi adotado **processamento incremental**, controlado por configuração:
+Foi adotado processamento incremental (chunk por chunk) nas etapas de
+filtragem, normalização e consolidação dos dados.
 
-```python
-PROCESSAR_INCREMENTAL = True
-CHUNK_SIZE = 50000
-```
+A leitura incremental foi implementada diretamente nessas etapas,
+utilizando leitura em blocos ```chunksize = 50000```, evitando o carregamento
+completo dos arquivos em memória.
 
-Essa abordagem foi escolhida considerando o volume potencialmente elevado dos arquivos trimestrais da ANS e a necessidade de garantir estabilidade da execução, mesmo em ambientes com recursos limitados.
+Essa abordagem foi escolhida considerando o volume potencialmente elevado
+dos arquivos trimestrais da ANS e a necessidade de garantir estabilidade
+da execução, mesmo em ambientes com recursos limitados.
 
-A implementação permite alternar facilmente para processamento completo caso o volume de dados seja menor.
+---
+
+### Limitações conhecidas:
+A identificação de despesas assistenciais é realizada por heurísticas
+(baseadas em código contábil e descrição textual). Em um ambiente de
+produção, essa lógica poderia ser refinada com o plano de contas oficial
+ou regras específicas por tipo de demonstrativo.
 
 ---
 
@@ -210,11 +218,16 @@ python src/teste2_2_enriquecimento.py
 ### Trade-offs e decisões — Teste 2.2
 
 #### 🔹 Chave de integração (CNPJ)
-O consolidado contém reg_ans, enquanto o requisito exige integração por CNPJ.
+O consolidado contém `reg_ans`, enquanto o requisito exige integração por CNPJ.
 
 Decisão:
-- obter o CNPJ a partir do cadastro usando reg_ans
-- realizar o join final utilizando o CNPJ como chave
+- obter o CNPJ a partir do cadastro usando `reg_ans`
+- **normalizar a chave `reg_ans` em ambas as fontes** (remoção de caracteres não numéricos e remoção de zeros à esquerda)
+- realizar o join final utilizando o **CNPJ** como chave
+
+Essa normalização evita falhas de integração causadas por diferenças de formatação
+(ex.: `001234` vs `1234`), aumentando a taxa de correspondência com o cadastro oficial.
+
 
 #### 🔹 Registros sem correspondência no cadastro
 Decisão: manter os registros e marcar explicitamente.
@@ -303,3 +316,4 @@ A solução prioriza:
 - rastreabilidade de inconsistências
 - robustez no processamento
 Todas as etapas foram implementadas considerando boas práticas de engenharia de dados e alinhamento com os requisitos do desafio.
+A separação clara entre validação, enriquecimento e agregação garante modularidade, facilita testes independentes e permite evolução futura do pipeline sem acoplamento excessivo.

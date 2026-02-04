@@ -17,7 +17,6 @@ Data: 2026
 import os
 import wget
 import zipfile
-import shutil
 import pandas as pd
 import chardet
 import re
@@ -41,9 +40,6 @@ PALAVRAS_CHAVE = [
 ]
 
 # TRADE-OFF TÉCNICO
-# True = Processa em chunks (economiza memória, mais lento)
-# False = Carrega tudo de uma vez (usa mais memória, mais rápido)
-PROCESSAR_INCREMENTAL = True
 CHUNK_SIZE = 50000  # Linhas por chunk
 
 
@@ -71,7 +67,7 @@ def etapa1_baixar_arquivos():
     # Verificar se links foram preenchidos
     links_vazios = []
     for i, link in enumerate(links, 1):
-        if "ARQUIVO" in link:
+        if not link.startswith("http"):
             links_vazios.append(i)
     
     if links_vazios:
@@ -180,7 +176,7 @@ def etapa2_descompactar():
 # ETAPA 3: FILTRAR LINHAS DE DESPESAS / SINISTROS (CORRETA)
 def etapa3_filtrar():
     print("=" * 70)
-    print("ETAPA 3: FILTRANDO DESPESAS (CONTA CONTÁBIL)")
+    print("ETAPA 3: FILTRANDO DESPESAS (CONTA CONTÁBIL) - INCREMENTAL")
     print("=" * 70)
     print()
 
@@ -191,7 +187,7 @@ def etapa3_filtrar():
     arquivos = []
     for raiz, _, files in os.walk(pasta_origem):
         for f in files:
-            if f.endswith((".csv", ".txt")):
+            if f.endswith((".csv", ".txt", ".xlsx", ".xls")):
                 arquivos.append(os.path.join(raiz, f))
 
     if not arquivos:
@@ -202,39 +198,69 @@ def etapa3_filtrar():
 
     for caminho in arquivos:
         nome = os.path.basename(caminho)
+        ext = os.path.splitext(caminho)[1].lower()
         print(f"Processando: {nome}")
 
-        df = ler_arquivo(caminho)
-        if df is None or df.empty:
-            print("  ✗ Arquivo inválido")
+        nome_saida = nome
+        if nome_saida.lower().endswith(".csv"):
+            nome_saida = nome_saida.replace(".csv", "_despesas.csv")
+        elif nome_saida.lower().endswith(".txt"):
+            nome_saida = nome_saida.replace(".txt", "_despesas.csv")
+        else:
+            nome_saida = os.path.splitext(nome_saida)[0] + "_despesas.csv"
+
+        caminho_saida = os.path.join(pasta_destino, nome_saida)
+
+        # remove saída anterior se existir (pra não duplicar ao rerodar)
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+
+        escreveu_header = False
+        linhas_arquivo = 0
+
+        try:
+            if ext in [".csv", ".txt"]:
+                # ✅ incremental de verdade
+                for chunk in iterar_chunks_texto(caminho):
+                    filtrado = filtrar_despesas_assistenciais(chunk)
+
+                    if filtrado.empty:
+                        continue
+
+                    filtrado.to_csv(
+                        caminho_saida,
+                        sep=";",
+                        encoding="utf-8",
+                        index=False,
+                        mode="a",
+                        header=not escreveu_header
+                    )
+                    escreveu_header = True
+                    linhas_arquivo += len(filtrado)
+
+            else:
+                # Excel (não incremental)
+                df = pd.read_excel(caminho)
+                df_filtrado = filtrar_despesas_assistenciais(df)
+
+                if df_filtrado.empty:
+                    print("  ✗ Nenhuma despesa encontrada")
+                    continue
+
+                df_filtrado.to_csv(caminho_saida, sep=";", encoding="utf-8", index=False)
+                linhas_arquivo = len(df_filtrado)
+
+
+        except Exception as e:
+            print(f"  ✗ Erro ao processar: {e}")
             continue
 
-        df = normalizar_colunas(df)
-
-        if "cd_conta_contabil" not in df.columns:
-            print("  ✗ Coluna cd_conta_contabil não encontrada")
-            continue
-
-        df["cd_conta_contabil"] = df["cd_conta_contabil"].astype(str)
-
-        df_despesas = df[df["cd_conta_contabil"].str.startswith("3")]
-
-        if df_despesas.empty:
+        if linhas_arquivo == 0:
             print("  ✗ Nenhuma despesa encontrada")
             continue
 
-        nome_saida = nome.replace(".csv", "_despesas.csv")
-        caminho_saida = os.path.join(pasta_destino, nome_saida)
-
-        df_despesas.to_csv(
-            caminho_saida,
-            sep=";",
-            encoding="utf-8",
-            index=False
-        )
-
-        total_despesas += len(df_despesas)
-        print(f"  ✓ {len(df_despesas)} linhas de despesa")
+        total_despesas += linhas_arquivo
+        print(f"  ✓ {linhas_arquivo} linhas de despesa (salvo em {nome_saida})")
 
     print()
     print(f"Total de linhas de despesas: {total_despesas:,}")
@@ -275,15 +301,34 @@ def detectar_separador(caminho_arquivo, encoding):
     except:
         return ';'
 
+def iterar_chunks_texto(caminho_arquivo, chunksize=CHUNK_SIZE):
+    """
+    Itera por chunks de CSV/TXT sem carregar o arquivo inteiro na memória.
+    Detecta encoding e separador automaticamente.
+    """
+    encoding = detectar_encoding(caminho_arquivo)
+    separador = detectar_separador(caminho_arquivo, encoding)
+
+    for chunk in pd.read_csv(
+        caminho_arquivo,
+        sep=separador,
+        encoding=encoding,
+        on_bad_lines="skip",
+        low_memory=False,
+        chunksize=chunksize
+    ):
+        yield chunk
+
 
 def ler_arquivo(caminho_arquivo):
     """
-    Lê arquivo detectando formato automaticamente
-    
-    TRADE-OFF TÉCNICO:
-    - Se PROCESSAR_INCREMENTAL=True: Lê em chunks (economiza memória)
-    - Se PROCESSAR_INCREMENTAL=False: Lê tudo de uma vez (mais rápido)
+    Lê arquivo detectando formato automaticamente (modo simples).
+
+    Observação:
+    - Para processamento incremental (chunk por chunk), use iterar_chunks_texto()
+      nas etapas do pipeline.
     """
+
     nome = os.path.basename(caminho_arquivo)
     extensao = os.path.splitext(caminho_arquivo)[1].lower()
     
@@ -309,41 +354,15 @@ def ler_arquivo(caminho_arquivo):
             separador = detectar_separador(caminho_arquivo, encoding)
             print(f"      Separador: '{separador}'")
             
-            # TRADE-OFF!
-            if PROCESSAR_INCREMENTAL:
-                print(f"      Modo: Incremental (chunks de {CHUNK_SIZE} linhas)")
-                print(f"      Motivo: Economiza memória, processa arquivos grandes")
-                
-                chunks = []
-                chunk_count = 0
-                
-                for chunk in pd.read_csv(
-                    caminho_arquivo,
-                    sep=separador,
-                    encoding=encoding,
-                    on_bad_lines='skip',
-                    low_memory=False,
-                    chunksize=CHUNK_SIZE
-                ):
-                    chunks.append(chunk)
-                    chunk_count += 1
-                    print(f"      Processando chunk {chunk_count}...", end='\r')
-                
-                print(f"      ✓ {chunk_count} chunks processados          ")
-                df = pd.concat(chunks, ignore_index=True)
-                
-            else:
-                print(f"      Modo: Completo (carrega tudo)")
-                print(f"      Motivo: Mais rápido para arquivos pequenos")
-                
-                df = pd.read_csv(
-                    caminho_arquivo,
-                    sep=separador,
-                    encoding=encoding,
-                    on_bad_lines='skip',
-                    low_memory=False
-                )
-            
+            # lê completo (simples e previsível)
+            df = pd.read_csv(
+                caminho_arquivo,
+                sep=separador,
+                encoding=encoding,
+                on_bad_lines="skip",
+                low_memory=False
+            )
+
             print(f"      ✓ Lido com sucesso!")
             return df
         
@@ -357,143 +376,169 @@ def ler_arquivo(caminho_arquivo):
 
 
 def normalizar_colunas(df):
-    # Normaliza nomes das colunas
     df_norm = df.copy()
-    
+
     df_norm.columns = (
         df_norm.columns
         .str.strip()
         .str.lower()
-        .str.replace(' ', '_')
-        .str.replace('ã', 'a')
-        .str.replace('õ', 'o')
-        .str.replace('á', 'a')
-        .str.replace('é', 'e')
-        .str.replace('í', 'i')
-        .str.replace('ó', 'o')
-        .str.replace('ú', 'u')
-        .str.replace('â', 'a')
-        .str.replace('ê', 'e')
-        .str.replace('ô', 'o')
-        .str.replace('ç', 'c')
+        .str.replace(' ', '_', regex=False)
+        .str.replace('ã', 'a', regex=False)
+        .str.replace('õ', 'o', regex=False)
+        .str.replace('á', 'a', regex=False)
+        .str.replace('é', 'e', regex=False)
+        .str.replace('í', 'i', regex=False)
+        .str.replace('ó', 'o', regex=False)
+        .str.replace('ú', 'u', regex=False)
+        .str.replace('â', 'a', regex=False)
+        .str.replace('ê', 'e', regex=False)
+        .str.replace('ô', 'o', regex=False)
+        .str.replace('ç', 'c', regex=False)
     )
-    
+
     return df_norm
 
 
-def etapa4_normalizar():
-    # Normaliza todos os arquivos para formato padrão
+def filtrar_despesas_assistenciais(df):
+    """
+    Filtro mais aderente a 'assistenciais/sinistros' sem depender de um layout único.
+    Estratégia:
+    1) pega apenas contas da classe 3 (despesas)
+    2) se existir coluna descritiva, filtra por PALAVRAS_CHAVE
+    """
+    df = normalizar_colunas(df)
 
+    if "cd_conta_contabil" not in df.columns:
+        return df.iloc[0:0]  # vazio
+
+    df["cd_conta_contabil"] = df["cd_conta_contabil"].astype(str)
+    df = df[df["cd_conta_contabil"].str.startswith("3")]
+
+    if df.empty:
+        return df
+
+    # tenta achar uma coluna de texto para aplicar palavras-chave
+    possiveis_colunas_texto = [
+        "descricao", "ds_descricao", "descricao_conta", "ds_conta",
+        "nome_conta", "conta", "ds_linha", "descricao_linha"
+    ]
+    col_texto = next((c for c in possiveis_colunas_texto if c in df.columns), None)
+
+    # se não tiver coluna de texto, volta só com a regra da conta
+    if not col_texto:
+        return df
+
+    # filtra por palavras-chave (case-insensitive)
+    padrao = "|".join(re.escape(p) for p in PALAVRAS_CHAVE)
+    mask = (
+        df[col_texto]
+        .astype(str)
+        .str.lower()
+        .str.contains(padrao, na=False)
+    )
+    return df[mask]
+
+
+def etapa4_normalizar():
     print("=" * 70)
-    print("ETAPA 4: NORMALIZANDO ARQUIVOS")
+    print("ETAPA 4: NORMALIZANDO ARQUIVOS - INCREMENTAL")
     print("=" * 70)
     print()
-    
-    # Mostrar configuração do trade-off
-    print("Processamento:")
-    print("-" * 70)
-    if PROCESSAR_INCREMENTAL:
-        print("✓ Modo: INCREMENTAL (chunk por chunk)")
-        print("  Vantagens: Usa menos memória, processa arquivos grandes")
-        print("  Desvantagens: ~20% mais lento")
-    else:
-        print("✓ Modo: COMPLETO (tudo em memória)")
-        print("  Vantagens: Mais rápido")
-        print("  Desvantagens: Usa muita memória, pode falhar em arquivos grandes")
-    print("-" * 70)
-    print()
-    
+
     pasta_origem = "dados_despesas_sinistros"
     pasta_destino = "dados_normalizados"
-    
-    # Verificar pasta de origem
+
     if not os.path.exists(pasta_origem):
         print(f"✗ Pasta '{pasta_origem}' não encontrada!")
         print("Execute a Etapa 3 primeiro.")
         return False
-    
-    # Criar pasta de destino
-    if not os.path.exists(pasta_destino):
-        os.makedirs(pasta_destino)
-        print(f"✓ Pasta '{pasta_destino}' criada!")
-    
-    print()
-    
-    # Listar arquivos para normalizar
-    arquivos = [
-        f for f in os.listdir(pasta_origem)
-        if f.endswith(('.csv', '.txt', '.xlsx', '.xls'))
-    ]
-    
+
+    os.makedirs(pasta_destino, exist_ok=True)
+
+    arquivos = [f for f in os.listdir(pasta_origem) if f.endswith((".csv", ".txt", ".xlsx", ".xls"))]
     if not arquivos:
         print("✗ Nenhum arquivo encontrado!")
         return False
-    
-    print(f"Total de arquivos: {len(arquivos)}")
-    print()
-    
-    # Processar cada arquivo
+
+    print(f"Total de arquivos: {len(arquivos)}\n")
+
     processados = 0
     metadados = []
-    
+
     for i, arquivo in enumerate(arquivos, 1):
         print(f"[{i}/{len(arquivos)}] Normalizando: {arquivo}")
-        
+
         caminho_origem = os.path.join(pasta_origem, arquivo)
-        
-        # Ler arquivo
-        df = ler_arquivo(caminho_origem)
-        
-        if df is None:
-            print()
-            continue
-        
-        print(f"      Linhas: {len(df):,} | Colunas: {len(df.columns)}")
-        
-        # Normalizar colunas
-        print(f"      Normalizando colunas...")
-        df_norm = normalizar_colunas(df)
-        
-        # Salvar
+        ext = os.path.splitext(caminho_origem)[1].lower()
+
         nome_base = os.path.splitext(arquivo)[0]
         nome_saida = f"{nome_base}_normalizado.csv"
         caminho_saida = os.path.join(pasta_destino, nome_saida)
-        
-        df_norm.to_csv(caminho_saida, sep=';', encoding='utf-8', index=False)
-        
+
+        # remove saída anterior se existir
+        if os.path.exists(caminho_saida):
+            os.remove(caminho_saida)
+
+        escreveu_header = False
+        linhas_total = 0
+        colunas_total = None
+
+        try:
+            if ext in [".csv", ".txt"]:
+                for chunk in iterar_chunks_texto(caminho_origem):
+                    chunk_norm = normalizar_colunas(chunk)
+
+                    if colunas_total is None:
+                        colunas_total = len(chunk_norm.columns)
+
+                    chunk_norm.to_csv(
+                        caminho_saida,
+                        sep=";",
+                        encoding="utf-8",
+                        index=False,
+                        mode="a",
+                        header=not escreveu_header
+                    )
+                    escreveu_header = True
+                    linhas_total += len(chunk_norm)
+
+            else:
+                # Excel (não incremental)
+                df = pd.read_excel(caminho_origem)
+                df_norm = normalizar_colunas(df)
+                linhas_total = len(df_norm)
+                colunas_total = len(df_norm.columns)
+                df_norm.to_csv(caminho_saida, sep=";", encoding="utf-8", index=False)
+
+        except Exception as e:
+            print(f"  ✗ Erro: {e}\n")
+            continue
+
         tamanho_mb = os.path.getsize(caminho_saida) / (1024 * 1024)
-        print(f"      ✓ Salvo ({tamanho_mb:.2f} MB)")
-        
+        print(f"  ✓ Salvo: {nome_saida} | Linhas: {linhas_total:,} | Colunas: {colunas_total} | {tamanho_mb:.2f} MB\n")
+
         processados += 1
-        
-        # Guardar metadados
         metadados.append({
-            'arquivo_original': arquivo,
-            'arquivo_normalizado': nome_saida,
-            'linhas': len(df),
-            'colunas': len(df.columns),
-            'tamanho_mb': round(tamanho_mb, 2)
+            "arquivo_original": arquivo,
+            "arquivo_normalizado": nome_saida,
+            "linhas": linhas_total,
+            "colunas": colunas_total,
+            "tamanho_mb": round(tamanho_mb, 2)
         })
-        
-        print()
-    
-    # Salvar relatório
+
     if metadados:
         df_meta = pd.DataFrame(metadados)
-        caminho_relatorio = os.path.join(pasta_destino, '_RELATORIO.csv')
-        df_meta.to_csv(caminho_relatorio, sep=';', encoding='utf-8', index=False)
-        print(f"✓ Relatório salvo: _RELATORIO.csv")
-        print()
-    
-    print(f"Resumo: {processados}/{len(arquivos)} arquivo(s) normalizado(s)")
-    print()
-    
+        caminho_relatorio = os.path.join(pasta_destino, "_RELATORIO.csv")
+        df_meta.to_csv(caminho_relatorio, sep=";", encoding="utf-8", index=False)
+        print("✓ Relatório salvo: _RELATORIO.csv\n")
+
+    print(f"Resumo: {processados}/{len(arquivos)} arquivo(s) normalizado(s)\n")
     return processados > 0
 
 
 # ETAPA 5: CONSOLIDAÇÃO FINAL
 def etapa5_consolidar():
-    print("\nETAPA 5: CONSOLIDAÇÃO FINAL - DESPESAS ASSISTENCIAIS")
+    print("\nETAPA 5: CONSOLIDAÇÃO FINAL - INCREMENTAL")
     print("=" * 60)
 
     pasta_entrada = "dados_despesas_sinistros"
@@ -507,47 +552,20 @@ def etapa5_consolidar():
         print("❌ Pasta 'dados_despesas_sinistros' não encontrada.")
         return False
 
-    arquivos = [f for f in os.listdir(pasta_entrada) if f.endswith(".csv")]
-
+    arquivos = [ f for f in os.listdir(pasta_entrada)
+        if f.endswith(".csv") and re.search(r"[1-4]T\d{4}", f)
+    ]
+    
     if not arquivos:
         print("❌ Nenhum arquivo de despesas encontrado para consolidar.")
         return False
 
-    consolidados = []
+    consolidados_por_arquivo = []
 
     for arquivo in arquivos:
         caminho = os.path.join(pasta_entrada, arquivo)
         print(f"→ Consolidando: {arquivo}")
 
-        try:
-            df = pd.read_csv(caminho, sep=";", encoding="latin-1")
-        except Exception as e:
-            print(f"  ❌ Erro ao ler arquivo: {e}")
-            continue
-
-        # Validação mínima da estrutura
-        colunas_necessarias = {"data", "reg_ans", "vl_saldo_final"}
-        if not colunas_necessarias.issubset(df.columns):
-            print("  ❌ Estrutura incompatível, ignorado")
-            continue
-
-        # Garantir tipo numérico (se vier com vírgula, tenta corrigir)
-        df["vl_saldo_final"] = (
-            df["vl_saldo_final"]
-            .astype(str)
-            .str.replace(".", "", regex=False)   # remove separador de milhar (se existir)
-            .str.replace(",", ".", regex=False)  # troca vírgula por ponto
-        )
-        df["vl_saldo_final"] = pd.to_numeric(df["vl_saldo_final"], errors="coerce")
-
-        # Remover valores nulos ou <= 0
-        df = df[df["vl_saldo_final"] > 0]
-
-        if df.empty:
-            print("  ⚠️ Arquivo sem valores válidos após filtro.")
-            continue
-
-        # Extrair ano e trimestre do nome do arquivo (ex: 1T2025)
         match = re.search(r"([1-4])T(\d{4})", arquivo)
         if not match:
             print("  ❌ Não foi possível identificar trimestre/ano pelo nome.")
@@ -556,38 +574,69 @@ def etapa5_consolidar():
         trimestre = f"{match.group(1)}T"
         ano = int(match.group(2))
 
-        # Consolidação (somatório por operadora)
-        resumo = (
-            df.groupby("reg_ans", as_index=False)["vl_saldo_final"]
-            .sum()
-            .rename(columns={"vl_saldo_final": "valor_despesas"})
-        )
+        # acumulador: reg_ans -> soma(vl_saldo_final)
+        acumulado = {}
 
-        resumo["ano"] = ano
-        resumo["trimestre"] = trimestre
+        try:
+            for chunk in iterar_chunks_texto(caminho):
+                chunk = normalizar_colunas(chunk)
 
-        consolidados.append(resumo)
+                colunas_necessarias = {"reg_ans", "vl_saldo_final"}
+                if not colunas_necessarias.issubset(chunk.columns):
+                    continue
 
-    if not consolidados:
+                # numérico seguro
+                vals = (
+                    chunk["vl_saldo_final"]
+                    .astype(str)
+                    .str.replace(".", "", regex=False)
+                    .str.replace(",", ".", regex=False)
+                )
+                chunk["vl_saldo_final"] = pd.to_numeric(vals, errors="coerce")
+
+                chunk = chunk[chunk["vl_saldo_final"] > 0]
+                if chunk.empty:
+                    continue
+
+                # soma do chunk por reg_ans
+                chunk["reg_ans"] = chunk["reg_ans"].astype(str)
+                soma_chunk = chunk.groupby("reg_ans")["vl_saldo_final"].sum()
+
+                # acumula em dict (leve)
+                for reg, v in soma_chunk.items():
+                    acumulado[reg] = acumulado.get(reg, 0.0) + float(v)
+
+        except Exception as e:
+            print(f"  ❌ Erro ao processar: {e}")
+            continue
+
+        if not acumulado:
+            print("  ⚠️ Nenhum valor válido encontrado.")
+            continue
+
+        df_resumo = pd.DataFrame({
+            "reg_ans": list(acumulado.keys()),
+            "valor_despesas": list(acumulado.values()),
+            "ano": ano,
+            "trimestre": trimestre
+        })
+
+        consolidados_por_arquivo.append(df_resumo)
+
+    if not consolidados_por_arquivo:
         print("❌ Nenhum dado válido consolidado.")
         return False
 
-    df_final = pd.concat(consolidados, ignore_index=True)
-
-    # Ordenar para facilitar leitura
+    df_final = pd.concat(consolidados_por_arquivo, ignore_index=True)
+    df_final["valor_despesas"] = df_final["valor_despesas"].round(2)
     df_final = df_final.sort_values(by=["ano", "trimestre", "reg_ans"])
 
-    # Arredondar valores financeiros para 2 casas decimais
-    df_final["valor_despesas"] = df_final["valor_despesas"].round(2)
-
-    # Salvar CSV
     df_final.to_csv(arquivo_csv, sep=";", index=False, encoding="utf-8")
 
-    # Criar ZIP com o CSV dentro
     with zipfile.ZipFile(arquivo_zip, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(arquivo_csv, arcname="consolidado_despesas.csv")
 
-    print("\n✅ Consolidação concluída com sucesso!")
+    print("\n✅ Consolidação incremental concluída!")
     print(f"📁 CSV gerado: {arquivo_csv}")
     print(f"🗜️ ZIP gerado: {arquivo_zip}")
     print(f"📊 Total de registros: {len(df_final)}")
@@ -640,9 +689,8 @@ def executar_pipeline():
     print("  • dados_ans/                  (ZIPs baixados)")
     print("  • dados_extraidos/            (Arquivos descompactados)")
     print("  • dados_despesas_sinistros/   (Filtrados)")
-    print("  • dados_normalizados/         (Normalizados - PRONTOS!)")
     print("  • dados_normalizados/         (Normalizados)")
-    print("  • saida_final/                (CSV + ZIP CONSOLIDADO)")
+    print("  • dados_consolidados/         (CSV + ZIP CONSOLIDADO)")
     print()
 
 
