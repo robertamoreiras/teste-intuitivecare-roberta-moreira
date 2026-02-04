@@ -1,4 +1,0 @@
-arquivo_original;arquivo_normalizado;linhas;colunas;tamanho_mb
-1T2025_despesas.csv;1T2025_despesas_normalizado.csv;101161;6;8.05
-2T2025_despesas.csv;2T2025_despesas_normalizado.csv;99594;6;8.41
-3T2025_despesas.csv;3T2025_despesas_normalizado.csv;102915;6;8.71
