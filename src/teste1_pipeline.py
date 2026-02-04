@@ -3,7 +3,6 @@ PIPELINE SIMPLES - DEMONSTRAÇÕES CONTÁBEIS ANS
 ===============================================
 
 Pipeline completo em código simples e direto para iniciantes.
-Executa todas as etapas da Parte 1 do desafio.
 
 PASSO A PASSO:
 1. Baixa ZIPs usando wget (você cola os links)
@@ -11,7 +10,7 @@ PASSO A PASSO:
 3. Filtra arquivos de despesas/sinistros
 4. Normaliza os arquivos
 
-Autor: Pipeline ANS Simplificado
+Autor: Roberta Moreira dos Santos
 Data: 2026
 """
 
@@ -24,9 +23,7 @@ import chardet
 import re
 
 
-# =============================================================================
 # CONFIGURAÇÕES - AJUSTE AQUI
-# =============================================================================
 
 # COLE AQUI OS LINKS DOS 3 TRIMESTRES (visite o site da ANS e copie)
 LINK1 = "https://dadosabertos.ans.gov.br/FTP/PDA/demonstracoes_contabeis/2025/1T2025.zip"
@@ -50,10 +47,7 @@ PROCESSAR_INCREMENTAL = True
 CHUNK_SIZE = 50000  # Linhas por chunk
 
 
-# =============================================================================
 # ETAPA 1: BAIXAR ARQUIVOS COM WGET
-# =============================================================================
-
 def etapa1_baixar_arquivos():
     """
     Baixa arquivos ZIP usando wget
@@ -121,10 +115,7 @@ def etapa1_baixar_arquivos():
     return sucessos > 0
 
 
-# =============================================================================
 # ETAPA 2: DESCOMPACTAR ZIPS
-# =============================================================================
-
 def etapa2_descompactar():
     """
     Descompacta todos os arquivos ZIP
@@ -185,10 +176,8 @@ def etapa2_descompactar():
     
     return sucessos > 0
 
-# =============================================================================
-# ETAPA 3: FILTRAR LINHAS DE DESPESAS / SINISTROS (CORRETA)
-# =============================================================================
 
+# ETAPA 3: FILTRAR LINHAS DE DESPESAS / SINISTROS (CORRETA)
 def etapa3_filtrar():
     print("=" * 70)
     print("ETAPA 3: FILTRANDO DESPESAS (CONTA CONTÁBIL)")
@@ -222,8 +211,6 @@ def etapa3_filtrar():
 
         df = normalizar_colunas(df)
 
-        # 🔑 REGRA CONTÁBIL REAL
-        # Despesas = contas que começam com "3"
         if "cd_conta_contabil" not in df.columns:
             print("  ✗ Coluna cd_conta_contabil não encontrada")
             continue
@@ -255,10 +242,8 @@ def etapa3_filtrar():
 
     return total_despesas > 0
 
-# =============================================================================
-# ETAPA 4: NORMALIZAR ARQUIVOS
-# =============================================================================
 
+# ETAPA 4: NORMALIZAR ARQUIVOS
 def detectar_encoding(caminho_arquivo):
     """Detecta encoding do arquivo"""
     try:
@@ -324,7 +309,7 @@ def ler_arquivo(caminho_arquivo):
             separador = detectar_separador(caminho_arquivo, encoding)
             print(f"      Separador: '{separador}'")
             
-            # AQUI ESTÁ O TRADE-OFF!
+            # TRADE-OFF!
             if PROCESSAR_INCREMENTAL:
                 print(f"      Modo: Incremental (chunks de {CHUNK_SIZE} linhas)")
                 print(f"      Motivo: Economiza memória, processa arquivos grandes")
@@ -372,7 +357,7 @@ def ler_arquivo(caminho_arquivo):
 
 
 def normalizar_colunas(df):
-    """Normaliza nomes das colunas"""
+    # Normaliza nomes das colunas
     df_norm = df.copy()
     
     df_norm.columns = (
@@ -397,16 +382,15 @@ def normalizar_colunas(df):
 
 
 def etapa4_normalizar():
-    """
-    Normaliza todos os arquivos para formato padrão
-    """
+    # Normaliza todos os arquivos para formato padrão
+
     print("=" * 70)
     print("ETAPA 4: NORMALIZANDO ARQUIVOS")
     print("=" * 70)
     print()
     
     # Mostrar configuração do trade-off
-    print("TRADE-OFF TÉCNICO - Processamento:")
+    print("Processamento:")
     print("-" * 70)
     if PROCESSAR_INCREMENTAL:
         print("✓ Modo: INCREMENTAL (chunk por chunk)")
@@ -506,10 +490,8 @@ def etapa4_normalizar():
     
     return processados > 0
 
-# =============================================================================
-# ETAPA 5: CONSOLIDAÇÃO FINAL (DESPESAS / EVENTOS ANS)
-# =============================================================================
 
+# ETAPA 5: CONSOLIDAÇÃO FINAL
 def etapa5_consolidar():
     print("\nETAPA 5: CONSOLIDAÇÃO FINAL - DESPESAS ASSISTENCIAIS")
     print("=" * 60)
@@ -612,10 +594,8 @@ def etapa5_consolidar():
 
     return True
 
-# =============================================================================
-# PIPELINE PRINCIPAL
-# =============================================================================
 
+# PIPELINE PRINCIPAL
 def executar_pipeline():
     """
     Executa todas as etapas do pipeline
@@ -665,10 +645,8 @@ def executar_pipeline():
     print("  • saida_final/                (CSV + ZIP CONSOLIDADO)")
     print()
 
-# =============================================================================
-# PONTO DE ENTRADA
-# =============================================================================
 
+# PONTO DE ENTRADA
 if __name__ == "__main__":
     # Verificar dependências
     try:

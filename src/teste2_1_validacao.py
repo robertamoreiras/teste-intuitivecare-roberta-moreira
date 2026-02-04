@@ -1,19 +1,15 @@
 import os
 import pandas as pd
 
-# =============================================================================
-# CONFIGURAÇÃO
-# =============================================================================
 
+# CONFIGURAÇÃO
 ARQUIVO_ENTRADA = "dados_consolidados/consolidado_despesas.csv"
 PASTA_SAIDA = "dados_validados"
 
 os.makedirs(PASTA_SAIDA, exist_ok=True)
 
-# =============================================================================
-# FUNÇÕES DE VALIDAÇÃO
-# =============================================================================
 
+# FUNÇÕES DE VALIDAÇÃO
 def validar_ano(valor):
     return isinstance(valor, int) and 2000 <= valor <= 2100
 
@@ -23,10 +19,8 @@ def validar_trimestre(valor):
 def validar_valor(valor):
     return pd.notna(valor) and valor > 0
 
-# =============================================================================
-# PIPELINE DE VALIDAÇÃO
-# =============================================================================
 
+# PIPELINE DE VALIDAÇÃO
 def validar_dados():
     print("\nTESTE 2.1 — VALIDAÇÃO DE DADOS")
     print("=" * 50)

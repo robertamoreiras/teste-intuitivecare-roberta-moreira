@@ -9,6 +9,7 @@ dados_normalizados/
 dados_consolidados/
 dados_validados/
 dados_enriquecidos/
+dados_agregados/
 
 # Arquivos temporários
 __pycache__/
